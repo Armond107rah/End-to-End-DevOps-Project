@@ -29,7 +29,7 @@ PERN-stack Application/
 ├── Client/
 ├── Server/
 └── Database/
-
+```
 Important files included:
 '''plain text
 Client/package.json

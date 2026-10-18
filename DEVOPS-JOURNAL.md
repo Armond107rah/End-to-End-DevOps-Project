@@ -249,7 +249,7 @@ This configuration created:
 - Username:  
 - Password:  
 - Port:
-
+```
 ## 15. Verify PostgreSQL Is Running
 Check running containers:
 ```bssh
@@ -258,5 +258,140 @@ docker ps
 The expected result should give you the container name. If the container stopped:
 ```bash
 docker start <container name>
+```
+The backend cannot connect to PostgreSQL if the database service is not running.
+
+## 16. Configure the Backend .env
+The backend expected: 
+```plain text
+DATABASE_URL
+```
+The working local configuration was
+```env
+PORT=5000
+postgresql://USERNAME:PASSWORD@HOST:PORT/DATABASE
+```
+## Why localhost Works Here
+The backend was running directly on my Mac machine. PostgreSQL was running inside Docker but exposed to the MAC through 5432:5432.
+Therefore the local Node backend could reach PostgreSQL thought localhost:5432
+
+## 17. Verify Node Can Read DATABASE_URL
+A simple validation command was used:
+```bash
+node -e 'require("dotenv").config(); console.log(Boolean(process.env.DATABASE_URL))'
+```
+Expected result: true
+This proves that the .env file exists, dotenv loaded it, & DATABASE_URL is available to Node
+
+## 18. Start the Backend
+From the Server directory:
+```bash
+node server.js
+```
+The successful output should give you:
+```plaintext
+Server running on port 5000
+Connected to the database
+```
+The backend process running does not automatically mean the database connection works. Both the Express server and the PostgreSQL connection need to be checked.
+## 19. API Runtime Test
+The backend was kept running in Terminal 1.
+In Terminal 2:
+```bash
+curl -i http://localhost:5000/api/items
+```
+The API returned:
+```plaintext
+HTTP/1.1 200 OK
+```
+A 200 OK confirms that the request successfully reached the Express API and the server returned a successful response. The possible results can give you:
+```JSON
+[]
+```
+or:
+```JSON
+[
+  {
+    "id": 1,
+    "name": "Example",
+    "description": "Example record"
+  }
+]
+```
+For API Request flow, the runtime test proved this path:
+Curl --> Express API --> PostgreSQL --> Express --> HTTP response
+
+This is essential to understand because a CI/CD pipeline should eventually verify application behavior, not only whether Docker images were built. Running a Runtime test is important before CI/CD. A deployment canappear healthy while the application is not functional. 
+
+For Example:
+```plaintext
+Container running          PASS
+Node process running       PASS
+Database connection        FAIL
+```
+That is still a broken application. Runtime testing verifies the actual dependency chain. The goal is to prove that API can connect and communicate the backend and database to give a valid response before automating the process. 
+
+## 20. Beginning CRUD Testing
+After the GET runtime test succeeded, the next phase was CRUD Testing. The goal is to verify that the backend can perform all major database operations.
+CRUD means:
+```plaintext
+CREATE = POST
+READ   = GET
+UPDATE = PUT
+DELETE = DELETE
+```
+## CRUD TEST 1: CREATE-POST
+Create a test record:
+```bash
+curl -i -X POST http://localhost:5000/api/items \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test Item","description":"Created during API testing"}'
+```
+A successful response should return the newly created record. 
+Example:
+```JSON
+{
+  "id": 1,
+  "name": "Test Item",
+  "description": "Created during API testing"
+}
+```
+The returned id should be saved because it will be used during UPDATE and DELETE testing.
+
+## CRUD TEST 2: READ-GET
+After POST:
+```bash
+curl -i http://localhost:5000/api/items
+```
+The created item should appear in the response. This proves that POST actually wrote data into PostgreSQL.
+## THE NEXT PLANNED CRUD TESTS
+UPDATE
+```bash
+curl -i -X PUT http://localhost:5000/api/items/<ID> \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Updated Item","description":"Updated during CRUD testing"}'
+```
+DELETE
+```bash
+curl -i -X DELETE http://localhost:5000/api/items/<ID>
+```
+FINAL VERIFICATION
+```bash
+curl -i http://localhost:5000/api/items
+```
+The actual ID returned from POST should always be used.
+
+# Current Status
+```plaintext
+[PASS] Database files inspected
+[PASS] PostgreSQL strategy chosen
+[PASS] PostgreSQL Docker container created
+[PASS] Database port exposed locally
+[PASS] DATABASE_URL identified
+[PASS] .env created/configured
+[PASS] Node confirmed DATABASE_URL exists
+[PASS] Backend started
+[PASS] PostgreSQL connection established
+[PASS] GET /api/items returned HTTP 200
 ```
 

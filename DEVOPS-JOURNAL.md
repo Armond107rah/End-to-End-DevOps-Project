@@ -196,3 +196,67 @@ with Nginx or another reverse proxy forwarding requests internally. This must be
 [PASS] Frontend build completed
 [PASS] Backend URL found in compiled frontend
 ```
+## Inspect the Database
+The first step was to understand what database-related files already exist in the repository instead of immediately creating a new database setup.
+
+From the PERN-stack Application directory:
+```bash
+cat Database/README.md
+```
+Then inspect the backup file type:
+```bash
+file Database/pg_backup
+```
+The goal is to avoid recreating something that already exists. Before changing anything, a DevOps engineer should first determine whetehr the repository already includes
+- Database setup instructions
+- SQL scripts
+- Database backups
+- Schema information
+- Restore procedures
+
+## 13. Inspect Backend Environment Variables
+The backend source code showed that PostgreSQL is configured through DATABASE_URL
+The backend uses:
+```javascript
+connectionString: process.env.DATABASE_URL
+```
+This means the application expects one complete PostgreSQL connection string. A safe way to inspect an existing .env file without exposing secrets is:
+```bash
+sed 's/=.*/=<redacted>/' Server/.env
+```
+The example of safe output:
+```plain text
+PORT=<redacted>
+DATABASE_URL=<redacted>
+```
+This matters because environment variables allow the same application code to work in different environments.
+
+PostgreSQL was not installed directly on the local machine. Instead of installing PostgreSQL permnently on the machine, Docker was used to create an isolated Database environment. This is useful in DevOps because containers make environments easier to recreate.
+
+## 14. Start PostgreSQL with DOCKER
+The database container was created with:
+``bash
+docker run --name pern-postgres \
+  -e POSTGRES_USER=<username>\
+  -e POSTGRES_PASSWORD=<password> \
+  -e POSTGRES_DB= <database name>\
+  -p <portnumber>:<portnumber> \
+  -d postgres:16
+  ```
+This configuration created:
+- Container: 
+- Database:  
+- Username:  
+- Password:  
+- Port:
+
+## 15. Verify PostgreSQL Is Running
+Check running containers:
+```bssh
+docker ps
+```
+The expected result should give you the container name. If the container stopped:
+```bash
+docker start <container name>
+```
+

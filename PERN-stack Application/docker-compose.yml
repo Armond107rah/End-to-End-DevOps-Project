@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: pern-postgres
+    environment:
+      POSTGRES_USER: pernuser
+      POSTGRES_PASSWORD: pernpassword
+      POSTGRES_DB: perndb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./Database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pern-network
+
+  backend:
+    build:
+      context: ./Server
+    container_name: pern-backend
+    environment:
+      PORT: 5000
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    networks:
+      - pern-network
+
+  frontend:
+    build:
+      context: ./Client
+    container_name: pern-frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    networks:
+      - pern-network
+
+volumes:
+  postgres_data:
+
+networks:
+  pern-network:

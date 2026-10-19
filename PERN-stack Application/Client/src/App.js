@@ -9,7 +9,7 @@ const App = () => {
   
   useEffect(() => {
     // Fetch all items
-    axios.get(`${process.env.Backend_Base_Url}/api/items`)
+    axios.get(`${process.env.REACT_APP_BACKEND_BASE_URL}/api/items`)
       .then(response => {
         setItems(response.data);
       })
@@ -18,7 +18,7 @@ const App = () => {
 
   const handleAddItem = async () => {
     try {
-      const response = await axios.post(`${process.env.Backend_Base_Url}/api/items`, { name, description });
+      const response = await axios.post(`${process.env.REACT_APP_BACKEND_BASE_URL}/api/items`, { name, description });
       setItems([...items, response.data]);
       setName('');
       setDescription('');
@@ -29,7 +29,7 @@ const App = () => {
 
   const handleUpdateItem = async () => {
     try {
-      const response = await axios.put(`${process.env.Backend_Base_Url}/api/items/${editId}`, { name, description });
+      const response = await axios.put(`${process.env.REACT_APP_BACKEND_BASE_URL}/api/items/${editId}`, { name, description });
       setItems(items.map(item => item.id === editId ? response.data : item));
       setName('');
       setDescription('');
@@ -41,7 +41,7 @@ const App = () => {
 
   const handleDeleteItem = async (id) => {
     try {
-      await axios.delete(`${process.env.Backend_Base_Url}/api/items/${id}`);
+      await axios.delete(`${process.env.REACT_APP_BACKEND_BASE_URL}/api/items/${id}`);
       setItems(items.filter(item => item.id !== id));
     } catch (error) {
       console.error(error);

@@ -1,25 +1,31 @@
-# Base image fo level1
-FROM node:18-alpine AS build
+# ==========================================
+# Stage 1: Build React application
+# ==========================================
 
-# setting up the working directory
+FROM node:24-alpine AS build
+
 WORKDIR /usr/app
 
-ENV Backend_Base_Url=http://backend:5000  
+ENV REACT_APP_BACKEND_BASE_URL=http://backend:5000
 
-COPY package*.json .
+COPY package*.json ./
 
-RUN npm install 
+RUN npm ci
 
 COPY . .
 
 RUN npm run build
 
-# stage 2
-FROM nginx:alpine 
 
-ENV Backend_Base_Url=http://backend:5000  
+# ==========================================
+# Stage 2: Nginx production runtime
+# ==========================================
 
-COPY  --from=build /usr/app/build/  /usr/share/nginx/html
+FROM nginx:alpine
+
+RUN apk update && apk upgrade --no-cache
+
+COPY --from=build /usr/app/build/ /usr/share/nginx/html
 
 EXPOSE 80
 

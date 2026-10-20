@@ -1,4 +1,4 @@
-FROM node:24-alpine3.23 AS dependencies
+FROM node:24-alpine3.24 AS dependencies
 
 WORKDIR /usr/app
 
@@ -7,7 +7,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 
-FROM node:24-alpine3.23
+FROM node:24-alpine3.24
 
 WORKDIR /usr/app
 

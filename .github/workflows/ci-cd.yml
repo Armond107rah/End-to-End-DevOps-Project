@@ -1,0 +1,61 @@
+name: PERN DevOps CI/CD
+
+on:
+  push:
+    branches:
+      - devops-pipeline
+
+  pull_request:
+    branches:
+      - devops-pipeline
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./PERN-stack Application
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install frontend dependencies
+        working-directory: ./PERN-stack Application/Client
+        run: npm install
+
+      - name: Build frontend
+        working-directory: ./PERN-stack Application/Client
+        env:
+          REACT_APP_BACKEND_BASE_URL: http://localhost:5000
+        run: npm run build
+
+      - name: Install backend dependencies
+        working-directory: ./PERN-stack Application/Server
+        run: npm install
+
+      - name: Validate Docker Compose
+        env:
+          POSTGRES_USER: pernuser
+          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_DB: perndb
+        run: docker compose config
+
+      - name: Build Docker images
+        env:
+          POSTGRES_USER: pernuser
+          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_DB: perndb
+        run: docker compose build

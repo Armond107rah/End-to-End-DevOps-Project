@@ -4,9 +4,10 @@ WORKDIR /usr/app
 
 RUN apk upgrade --no-cache
 
-COPY package*.json .
+COPY package*.json ./
 
-RUN npm install && npm install -g pm2  
+RUN npm install \
+    && npm install -g npm@latest pm2@latest  
 
 COPY  . .
 

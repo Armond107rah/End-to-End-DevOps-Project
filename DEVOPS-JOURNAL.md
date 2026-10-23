@@ -395,3 +395,240 @@ The actual ID returned from POST should always be used.
 [PASS] GET /api/items returned HTTP 200
 ```
 
+This phase moved the PERN application from a manually tested local setup into ta reproducible Docker Compose environment.
+
+Browser --> Frontend(Nginx) --> Backend(Express) --> PostgreSQL --> Persistent Volume
+
+The goal in DevOps is to make the environment repeatable, testable, consistent and ready for CI/CD.
+
+# PHASE 2
+## 1. Validate the Application Locally First
+
+Before relying on Docker, the application needs to be tested locally. Here are some things that happened during testing that I should document:
+The frontend loaded successfully, but the browser Network tab showed:
+```plaintext
+http://localhost:3000/undefined/api/items
+```
+This was important because it proved the page could render while the frontend-to-backend connection was still broken.
+The frontend used:
+```JavaScript
+process.env.Backend_Base_Url
+```
+The project uses Create React App, so the custom browser variable was changed to:
+```JavaScript
+process.env.REACT_APP_BACKEND_BASE_URL
+```
+The local frontend environment used:
+```env
+REACT_APP_BACKEND_BASE_URL=http://localhost:5000
+```
+After restarting React, the frontend could call the backend correctly.
+
+This matters in DevOps because ensuring that the page is loads correctly is not enough. The application must be tested through the full dependency chain. From Frontend --> Backend --> Database.
+This creates a known baseline before changes are introduced.
+## 2. Verify the Productino Frontend Build
+The React application was also tested with:
+```bash
+npm run build
+```
+This proves the source can create a production ready frontend bundle:
+The difference is npm start gives development runtime as npm run build created production build generation. A successful build is necessary but it does not prove that the full application works end-to-end.
+## 3. Move Service Communication into Docker Networking
+The next goal was to remove the developer laptop from service to service communication. 
+Instead of:
+```plaintext
+Backend --> localhost --> PostgreSQL
+```
+The containerized environment uses:
+```plaintext
+Backend --> postgres:5432
+```
+Inside Docker, localhost means the current container. Containers should communicate using Docker service names or internal DNS. A production application should not depend on one engineer's laptop, IP address, or local networking configuration.
+Container networking improves:
+- Portability
+- Consistency
+- Isolation
+- Security boundaries
+- CI/CD automation
+
+This same service to service idea is used later in platforms such as Kubernetes & ECS.
+## 4. Build and Validate the Containers
+The backend and frontend images were built from their Dockerfiles. The backend was configured to connect to PostgresSQL through the Docker network.
+The frontend was served through Nginx and exposed locally on:
+```plaintext
+http://localhost:8080
+```
+The browser Network tab showed successful requests and application records appeared on the page. That proved the application browser has communicated all three containers.
+## 5. Replace Manual Docker commands with Docker Compose
+Docker Compose turns manual setup into configuration. A new engineer should not need tribal knowledge or a long list of commands to reproduce the environment. Compose improves:
+- Onboarding
+- Consistency
+- Troubleshooting
+- Documentation
+- Automation readiness
+  
+once the individual containers worked, the setup was converted into:
+```plaintext
+docker-compose.yml
+```
+Instead of manually running several docker run and network commands, Compose defines:
+- frontend
+- backend
+- postgress
+- network
+- volume
+
+The stack can be started with:
+```bash
+docker compose up -d
+```
+and stopped with:
+```bash
+docker compose down
+```
+## 6. Add Automatic Database Initialization
+A fresh PostgresSQL Compose volume created a new database, but the backend returned: relation "items_table" does not exist
+This showed that infrastructure existed, but the application schema did not. so a new file was created:
+```plaintext
+Daabase/init.sql
+```
+with: 
+```SQL
+CREATE TABLE IF NOT EXISTS items_table (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT
+);
+```
+The Compose file mounts it into PostgreSQL:
+```YAML
+volumes:
+  - postgres_data:/var/lib/postgresql/data
+  - ./Database/init.sql:/docker-entrypoint-initdb.d/init.sql
+```
+On a fresh database volume, PostgreSQL automatically executes initialization scripts in that directory. The PostgreSQL starts finds the fresh database detected. Then the init.sql runs leading the items table to be created. 
+A real deployment should not require an engineer to manually open psql and create tables after every fresh deployment. You want Database initialization to be automable, predictable and version controlled. This is the same principle behind formal migration systems used in larger applications.
+
+##7. Add a PostgreSQL Health Check
+During Compose startup, the backend initially attempted to connect before PostgreSQL was ready. 
+
+The PostgreSQL service received a health check:
+```YAML
+healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+  interval: 5s
+  timeout: 5s
+  retries: 5
+```
+The backend dependency was changed to:
+```YAML
+depends_on:
+  postgres:
+    condition: service_healthy
+```
+With what is going on is PostgreSQL starts sending the pg command check the PostgreSQL. The Database returns healthy, then the backend starts. This protects automated deployments from race conditions.
+## 8. Move Database credentials out of Compose
+Instead of hardcoding database values directly into docker-compose.yml, Compose now reference variables:
+```YAML
+POSTGRES_USER: ${POSTGRES_USER}
+POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+POSTGRES_DB: ${POSTGRES_DB}
+```
+The backend connection string uses:
+```YAML
+DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+```
+The actual local values are stored in a root .env file. That env is ignored in Git. Version control should contain configuration structure, not secrets. For a local learning environment, .env is useful. In enterprise environments, the same values normally come from:
+- AWS Secrets Manager
+- AWS Systems Manager Parameter Store
+- HashiCorp Vault
+- Kubernetes Secrets
+
+## 9. Add Persistent PostgreSQL Storage
+A named volume was added:
+```YAML
+volumes:
+  postgres_data:
+```
+PostgreSQL stores data in:
+```YAML
+- postgres_data:/var/lib/postgresql/data
+```
+This separates persistent data from the lifecycle of the container.
+The persistence test is:
+```bash
+docker compose down
+docker compose up -d
+```
+If the data remains, persistence is working. Containers should be disposable. Persistent business data should not disappear when a container is recreated.
+## Validate the Complete Compose Environment
+The final validation should prove:
+```plaintext
+[PASS] PostgreSQL starts
+[PASS] PostgreSQL becomes healthy
+[PASS] init.sql creates items_table
+[PASS] Backend starts
+[PASS] Backend connects to PostgreSQL
+[PASS] Frontend starts
+[PASS] API returns successful responses
+[PASS] Browser CRUD works
+[PASS] Data survives compose down/up
+```
+Usefule commands:
+```bash
+docker compose config
+docker compose ps
+docker compose logs postgres
+docker compose logs backend
+curl -i http://localhost:5000/api/items
+```
+The frontend is verified at: http://localhost:8080
+
+## 11. Git Cleanup Before CI/CD
+Before committing, Git changes were reviewed carefully.
+```plaintext
+Client/src/App.js
+```
+was kept
+Generated React files under:
+```plaintext
+Client/build/
+```
+were restored instead of being mixed into the source-code commit. The final working infrastructure changes include files such as:
+```plaintext
+docker-compose.yml
+Database/init.sql
+Client/src/App.js
+```
+while .env stays out of Git.
+
+Now the architecture looks like: Browser --> Frontend(Nginx)--> Backedn(Express)--> PostgreSQL--Named Volume
+
+Docker Compose now manages:
+- Service startup
+- Networking
+- Database initialization
+- Health checks
+- Persistent storage
+- Environment configuration
+
+CI/CD should not be where a deployment process is invented. It should automate a process that already works. This created a baseline that the application is validated, containers & compose are validated, Database automated, health checks added, configuration protected. This leaves for our CI/CD pipeline to being.
+
+# PHASE 3- CI/CD DevSecOps Update
+## 1. GitHub Actions CI
+After the local application and Docker compose stack were proven manually, the next phase is automation.
+The workflow was created at:
+```plaintext
+.github/workflows/ci-cd.yml
+```
+It runs against the devops-pipeline branch and validates:
+- Checkout
+- Node.Js setup
+- Install frontend dependencies
+- Build React
+- Install backend dependencies
+- Validate Docker Compose
+- Build Docker images
+Understand CI should automatically answer whether a source-code change can still produce a deployable application.
+## 2. Publish Images to GitHub Container Registry
+A second job, push-images was added after build-and-test. Images are published to GitHub Registry only after CI succeeds. The images are tagged with both latest and the 

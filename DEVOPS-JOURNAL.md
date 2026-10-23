@@ -631,4 +631,62 @@ It runs against the devops-pipeline branch and validates:
 - Build Docker images
 Understand CI should automatically answer whether a source-code change can still produce a deployable application.
 ## 2. Publish Images to GitHub Container Registry
-A second job, push-images was added after build-and-test. Images are published to GitHub Registry only after CI succeeds. The images are tagged with both latest and the 
+A second job, push-images was added after build-and-test. Images are published to GitHub Registry only after CI succeeds. The images are tagged with both latest and the Git commit SHA so a running image can be traced back to the extract source revision that produced it. This supports rollback & incident response.
+
+## 3. Add Trivy Security Scanning
+Trivy was inserted between image build and image push to find High/Critical findings. The pipeline intentionally used a non-zero exit code for High/Critical findings. The goal was not simply to report vulnerabilities, but to stop vulnerable images from being promoted.
+
+## 4. Backend Security Remediation
+The first backend scan found vulnerabilities in both Alpine OS packages and Node/global tooling. The remediation process was:
+- Identify vulnerable package
+- Identify which image layer introduced it
+- Update or remove that layer/tool
+- Rebuild with --pull --no-cache
+- Rescan
+
+The backend base image was upgraded from the older Node/Alpine combination to a newer supported Node/Alpine release. Global packages were also inspected inside the build image. The remaining vulnerable packages were traced to global npm and pm2, not the application dependency tree. Because PM2 was not necessary inside a Docker-managed runtime, the backend was simplified from: 
+
+Docker --> PM2 --> Node --> server.js
+
+to
+
+Docker --> Node --> server.js
+
+The Dockerfile was converted to a multi-stage build so the final runtime image contained only the production dependencies and runtime components actually required by the application. Why this matters: removing unnecessary software reduces attack surface, image size and future maintenance. 
+
+## 5. Frontend Security Remediation
+After the backend passed Trivy, the remaining findings came from the frontend image. The frontend uses a multi-stage Dockerfile: Node build stage to Nginx runtime stage
+The remaining vulnerabilities were therefore investigated in the final Nginx/Alpine runtime rather than the React source code itself. The frontend image was updated by using a newer build/runtime base, upgrading Alpine packages and keeping the final runtime minimal.
+
+The React API environment variable was also corrected to use:
+```plaintext
+REACT_APP_BACKEND_BASE_URL
+```
+during the build stage. A React environment variable is compiled into the static bundle during npm run build; setting the old variable only in the Nginx runtime stage does not dynamically rewrite the already built frontend.
+
+## 6. Successful DevSecOps Gate
+After iterative remediation, both backend and frontend images successfully passed Trivy. 
+
+[Install image]
+
+This is an important DevSecOps milestone: image promotion is now conditional on both build correctness and security policy.
+
+## Current Status
+
+```plaintext
+[PASS] Application reverse engineering
+[PASS] Frontend/backend/database validation
+[PASS] Manual CRUD testing
+[PASS] Docker networking
+[PASS] Docker Compose
+[PASS] Automatic database initialization
+[PASS] PostgreSQL health checks
+[PASS] Persistent volume
+[PASS] Environment variable separation
+[PASS] GitHub Actions CI
+[PASS] GHCR image publishing
+[PASS] Backend Trivy remediation
+[PASS] Frontend Trivy remediation
+[PASS] HIGH/CRITICAL image security gate
+```
+DevSecOps is using scan results to identify where risk enters the image, remove unnecessary software, update vulnerable layers, and allow only approved artifacts to move forward. 

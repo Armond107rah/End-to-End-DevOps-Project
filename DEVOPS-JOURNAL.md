@@ -690,3 +690,184 @@ This is an important DevSecOps milestone: image promotion is now conditional on 
 [PASS] HIGH/CRITICAL image security gate
 ```
 DevSecOps is using scan results to identify where risk enters the image, remove unnecessary software, update vulnerable layers, and allow only approved artifacts to move forward. 
+
+# AWS Deployment
+[Insert AWS secops architecture image]
+We moved the PERN application from a local Docker/GHCR deployment into a production style AWS architecture. The working cloud request path is now:
+
+Internet --> Application Load Balancer --> Private EC2 Instance --> Docker Compose --> Nginx Frontend --> Express Backend --> PostgreSQL
+
+The application is reachable through the ALB while the EC2 server does not require a public IP.
+
+## 1. Replace Browser-Side Hostnames with Nginx Reverse Proxy
+
+The frontend originally called:
+```plaintext
+http://backend:5000/api/items
+```
+That hostname works only inside Docker's private network. A browser cannot resolve the Docker service name backend.
+A temporary localhost:5000 fix worked locally, buit it would not work for remote users because localhost would point to the visitor's computer.
+The final solution was to make React use relative API routes:
+```plaintext
+/api/items
+```
+Nginx now proxies /api requests internally to:
+```plaintext
+http://backend:5000
+```
+The browser now interacts with Nginx which retrieves the React static files and the api communicates to backend:5000
+The frontend image is now portable between local Docker, EC2, an ALB DNS name and a future custom domain without rebuilding React with a different backend hostname.
+# 2. Add Custom Nginx Configuration
+A Client/nginx.conf file was added with a reverse-proxy rule:
+```nginx
+location /api/ {
+    proxy_pass http://backend:5000;
+}
+```
+The frontend Dockerfile was updated with:
+```dockerfile
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+```
+The old frontend backend URL environment variable was removed because the browser no longer needs to know the backend hostname.
+# 3. Fix React CRUD Routing
+All frontend Axios requests now use relative routes:
+```plaintext
+GET    /api/items
+POST   /api/items
+PUT    /api/items/:id
+DELETE /api/items/:id
+```
+During the refactor, the React build failed because the update function referenced an undefined variable. The application already tracked the selected record as editId, so the update request was corrected to:
+```JavaScript
+axios.put(`/api/items/${editId}`, ...)
+```
+This demonstrated that the build stage is functioning as a quality gate: invalid source code cannot be promoted into a container image.
+# 4. Validate the Reverse Proxy Locally
+The proxy was tested with:
+```bash
+curl -i http://localhost:8080/api/items
+```
+and returned:
+```plaintext
+HTTP/1.1 200 OK
+```
+The browser Network tab also showed: http://localhost:8080/api/items
+The CREATE, READ, UPDATE, DELETE were tested successfully through Nginx.
+# 5. Promote the Proxy Through CI/CD
+The React routing changes, frontend Dockerfile, customer Nginx configuration and deployment Compose file were committed to my secondary branch (devops-pipeline).
+The generated files under Client/build/ changed after npm run build; those generated artifacts were restored rather than included in the source commit. 
+
+The GitHub Actions passed again: Build --> Docker image build --> Trivy --> GHCR publish
+# 6. Create a Custom AWS VPC
+A custom VPC architecture was designed instead of using the default VPC
+
+The public subnets host public-facing infrastructure such as the ALB and NAT Gateway. The private application subnet hosts EC2. The private database subnets are reserved for a future RDS migration.
+# 7. Configure Internet and Private Routing
+The public route table uses:
+```plaintext
+0.0.0.0/0 → Internet Gateway
+```
+The private application route table uses:
+```plaintext
+0.0.0.0/0 → NAT Gateway
+```
+This allows the private EC2 instance to pull packages and GHCR images without receiving a public IP.
+# 8. Add the Application Load Balancer
+An internet-facing Application Load Balancer was created across two public subnets.
+Configuration:
+```plaintext
+Listener: HTTP :80
+Target group: pern-app-tg
+Target port: 80
+Health check: /
+```
+The target later became healthy, proving that the ALB could reach Nginx on the private EC2 server.
+# 9. Apply Security Group Segmentation
+The ALB security group allows public web traffic. The application security group allows port 80 only from the ALB security group. 
+```plaintext
+Internet → ALB :80
+ALB → EC2 :80
+Nginx → backend:5000
+Backend → postgres:5432
+```
+# 10. Harden Deployment Compose for EC2
+The production Compose file was changed so only the frontend is published on the EC2 host:
+```YAML
+frontend:
+  ports:
+    - "80:80"
+```
+The backend now uses:
+```YAML
+expose:
+  - "5000"
+```
+instead of publishing host port 5000. This reduces attack surface because Express is accessible only through Nginx inside the Docker network.
+# 11. Launch a Private EC2 Instance
+The EC2 application server was launched in private-app-a with:
+# 12. Use Systems Manager Instead of Public SSH
+The EC2 IAM role allows Session Manager access. The server does not need public IP or an open SSH port. 
+# 13. Install and Configure Docker on EC2
+Docker and Docker Compose were installed.
+The initial SSM shell user could not access the Docker daemon. The active user was ssm-user, so it was added to the Docker group and the session was restarted.
+After that:
+```bash
+docker ps
+```
+# 14. Create the EC2 Deployment Directory
+```plaintext
+~/pern-devops/
+├── docker-compose.deploy.yml
+├── .env
+└── Database/
+    └── init.sql
+```
+The EC2 host does not rebuild application source. It pulls CI-approved images from GHCR.
+# 15. Pull GHCR Images and Start the Stack
+The private EC2 instance successfully pulled:
+```plaintext
+ghcr.io/armond107rah/pern-backend:latest
+ghcr.io/armond107rah/pern-frontend:latest
+postgres:16
+```
+The stack was started with Docker Compose. The ALB target group became healthy after Nginx began listening on port 80.
+# 16. Validate the Public AWS Application Path
+The application was successfully reached through the ALB. So our validated path is complete
+
+Browser --> Public ALB --> Private EC2 -- Nginx --> Express --> PostgreSQL
+
+This completed the manual AWS deployment stage.
+# Continuous Deployment Design
+The next phase will automate deployment using:
+
+GitHub Actions --> AWS OIDC --> Systems Manager Run Command ---> Private EC2 --> docker compose pull --> docker compose up -d --> curl health check
+
+This avoids long lived AWS access keys and avoids opening SSH to the server. 
+
+```plaintext
+[PASS] Local PERN validation
+[PASS] CRUD testing
+[PASS] Docker Compose
+[PASS] Database initialization
+[PASS] Health checks
+[PASS] Persistent storage
+[PASS] GitHub Actions CI
+[PASS] GHCR publishing
+[PASS] Trivy security gate
+[PASS] Backend hardening
+[PASS] Frontend hardening
+[PASS] Nginx reverse proxy
+[PASS] Relative /api routing
+[PASS] Custom AWS VPC
+[PASS] Public/private subnet design
+[PASS] Internet Gateway
+[PASS] NAT Gateway
+[PASS] Application Load Balancer
+[PASS] Security group segmentation
+[PASS] Private EC2
+[PASS] Systems Manager access
+[PASS] Docker on EC2
+[PASS] GHCR pull on EC2
+[PASS] Healthy ALB target
+[PASS] Application reachable through ALB
+```

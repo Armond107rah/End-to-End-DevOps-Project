@@ -1,5 +1,8 @@
-name: PERN DevOps CI/CD
+name: PERN DevSecOps CI/CD Pipeline
 
+# ============================================================
+# TRIGGERS
+# ============================================================
 on:
   push:
     branches:
@@ -9,80 +12,102 @@ on:
     branches:
       - devops-pipeline
 
-permissions:
-  contents: read
-  packages: write
 
+# ============================================================
+# JOBS
+# ============================================================
 jobs:
 
-  # ============================================================
-  # JOB 1: BUILD AND VALIDATE APPLICATION
-  # ============================================================
-
+  # ==========================================================
+  # JOB 1 — BUILD AND VALIDATE
+  # ==========================================================
   build-and-test:
+    name: Build and Validate Application
     runs-on: ubuntu-latest
 
     steps:
 
-      # Download repository source code
+      # ------------------------------------------------------
+      # Checkout source code
+      # ------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Match the Node version used by the application Dockerfiles
+
+      # ------------------------------------------------------
+      # Install Node.js
+      # ------------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: "24"
 
-      # Install React/frontend dependencies
+
+      # ------------------------------------------------------
+      # FRONTEND
+      # Install dependencies and verify React can compile
+      # ------------------------------------------------------
       - name: Install frontend dependencies
-        working-directory: ./PERN-stack Application/Client
-        run: npm install
+        working-directory: "PERN-stack Application/Client"
+        run: npm ci
 
-      # Confirm React can create a production build
+
       - name: Build frontend
-        working-directory: ./PERN-stack Application/Client
-        env:
-          REACT_APP_BACKEND_BASE_URL: http://localhost:5000
+        working-directory: "PERN-stack Application/Client"
         run: npm run build
 
-      # Install backend dependencies
-      - name: Install backend dependencies
-        working-directory: ./PERN-stack Application/Server
-        run: npm install
 
-      # Validate docker-compose.yml syntax and variable substitution
-      - name: Validate Docker Compose
-        working-directory: ./PERN-stack Application
+      # ------------------------------------------------------
+      # BACKEND
+      # Install production application dependencies
+      # ------------------------------------------------------
+      - name: Install backend dependencies
+        working-directory: "PERN-stack Application/Server"
+        run: npm ci
+
+
+      # ------------------------------------------------------
+      # Validate Docker Compose
+      #
+      # CI-only database values are supplied here so Compose
+      # can resolve its environment-variable references.
+      # ------------------------------------------------------
+      - name: Validate Docker Compose configuration
+        working-directory: "PERN-stack Application"
         env:
           POSTGRES_USER: pernuser
-          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_PASSWORD: pernpassword
           POSTGRES_DB: perndb
         run: docker compose config
 
-      # Verify Docker can build the application images
-      - name: Build Docker images
-        working-directory: ./PERN-stack Application
+
+      # ------------------------------------------------------
+      # Verify Docker images can build
+      # ------------------------------------------------------
+      - name: Build Docker Compose images
+        working-directory: "PERN-stack Application"
         env:
           POSTGRES_USER: pernuser
-          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_PASSWORD: pernpassword
           POSTGRES_DB: perndb
         run: docker compose build
 
 
-  # ============================================================
-  # JOB 2: BUILD, SECURITY SCAN, AND PUSH DOCKER IMAGES
-  # ============================================================
 
+  # ==========================================================
+  # JOB 2 — BUILD, SECURITY SCAN, AND PUBLISH IMAGES
+  # ==========================================================
   push-images:
-    runs-on: ubuntu-latest
+    name: Scan and Publish Docker Images
 
-    # Do not run this job unless build-and-test passed
-    needs: build-and-test
+    needs:
+      - build-and-test
 
-    # Only publish images for an actual push.
-    # Pull requests will run CI but will not publish containers.
+    # Pull requests should validate code but should NOT
+    # publish container images.
     if: github.event_name == 'push'
+
+    runs-on: ubuntu-latest
 
     permissions:
       contents: read
@@ -90,66 +115,70 @@ jobs:
 
     steps:
 
-      # Download repository source code
+      # ------------------------------------------------------
+      # Checkout source
+      # ------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
-      # ----------------------------------------------------------
-      # BUILD BACKEND IMAGE
-      # ----------------------------------------------------------
+      # ======================================================
+      # BACKEND IMAGE
+      # ======================================================
 
       - name: Build backend Docker image
         run: |
           docker build \
+            --pull \
             -t ghcr.io/armond107rah/pern-backend:${{ github.sha }} \
-            "PERN-stack Application/Server"
+            "./PERN-stack Application/Server"
 
 
-      # ----------------------------------------------------------
-      # SECURITY SCAN BACKEND WITH TRIVY
-      # ----------------------------------------------------------
-
+      # ------------------------------------------------------
+      # Trivy backend security gate
+      #
+      # HIGH or CRITICAL findings cause the pipeline to fail.
+      # ------------------------------------------------------
       - name: Scan backend image with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: ghcr.io/armond107rah/pern-backend:${{ github.sha }}
           format: table
-          exit-code: '1'
+          exit-code: "1"
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL,HIGH
 
 
-      # ----------------------------------------------------------
-      # BUILD FRONTEND IMAGE
-      # ----------------------------------------------------------
+      # ======================================================
+      # FRONTEND IMAGE
+      # ======================================================
 
       - name: Build frontend Docker image
         run: |
           docker build \
+            --pull \
             -t ghcr.io/armond107rah/pern-frontend:${{ github.sha }} \
-            "PERN-stack Application/Client"
+            "./PERN-stack Application/Client"
 
 
-      # ----------------------------------------------------------
-      # SECURITY SCAN FRONTEND WITH TRIVY
-      # ----------------------------------------------------------
-
+      # ------------------------------------------------------
+      # Trivy frontend security gate
+      # ------------------------------------------------------
       - name: Scan frontend image with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: ghcr.io/armond107rah/pern-frontend:${{ github.sha }}
           format: table
-          exit-code: '1'
+          exit-code: "1"
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL,HIGH
 
 
-      # ----------------------------------------------------------
-      # LOGIN TO GITHUB CONTAINER REGISTRY
-      # ----------------------------------------------------------
+      # ======================================================
+      # GHCR AUTHENTICATION
+      # ======================================================
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -159,38 +188,217 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
 
-      # ----------------------------------------------------------
-      # TAG IMAGES AS LATEST
-      # ----------------------------------------------------------
-
-      - name: Tag backend image as latest
+      # ------------------------------------------------------
+      # Tag approved images
+      #
+      # SHA = immutable/revision-specific image
+      # latest = current deployment image
+      # ------------------------------------------------------
+      - name: Tag approved images
         run: |
           docker tag \
             ghcr.io/armond107rah/pern-backend:${{ github.sha }} \
             ghcr.io/armond107rah/pern-backend:latest
 
-      - name: Tag frontend image as latest
-        run: |
           docker tag \
             ghcr.io/armond107rah/pern-frontend:${{ github.sha }} \
             ghcr.io/armond107rah/pern-frontend:latest
 
 
-      # ----------------------------------------------------------
-      # PUSH BACKEND IMAGE
-      # ----------------------------------------------------------
-
-      - name: Push backend Docker images
+      # ------------------------------------------------------
+      # Publish backend
+      # ------------------------------------------------------
+      - name: Publish backend image to GHCR
         run: |
           docker push ghcr.io/armond107rah/pern-backend:${{ github.sha }}
           docker push ghcr.io/armond107rah/pern-backend:latest
 
 
-      # ----------------------------------------------------------
-      # PUSH FRONTEND IMAGE
-      # ----------------------------------------------------------
-
-      - name: Push frontend Docker images
+      # ------------------------------------------------------
+      # Publish frontend
+      # ------------------------------------------------------
+      - name: Publish frontend image to GHCR
         run: |
           docker push ghcr.io/armond107rah/pern-frontend:${{ github.sha }}
           docker push ghcr.io/armond107rah/pern-frontend:latest
+
+
+
+  # ==========================================================
+  # JOB 3 — CONTINUOUS DEPLOYMENT TO PRIVATE AWS EC2
+  # ==========================================================
+  deploy:
+    name: Deploy to AWS EC2
+
+    # Deployment cannot begin until the approved images
+    # have successfully reached GHCR.
+    needs:
+      - push-images
+
+    # Deploy only from the actual devops-pipeline branch.
+    # Never deploy from a pull request.
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/devops-pipeline'
+
+    runs-on: ubuntu-latest
+
+
+    # --------------------------------------------------------
+    # OIDC REQUIREMENTS
+    #
+    # id-token: write allows GitHub to request the short-lived
+    # OIDC token used to authenticate to AWS.
+    # --------------------------------------------------------
+    permissions:
+      id-token: write
+      contents: read
+
+
+    steps:
+
+      # ------------------------------------------------------
+      # Authenticate GitHub Actions to AWS
+      #
+      # Values come from:
+      #
+      # GitHub
+      # → Settings
+      # → Secrets and variables
+      # → Actions
+      # → Variables
+      #
+      # AWS_DEPLOY_ROLE_ARN
+      # AWS_REGION
+      # ------------------------------------------------------
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: PERN-GitHubActions-${{ github.run_id }}
+
+
+      # ------------------------------------------------------
+      # Confirm GitHub successfully assumed the AWS role
+      #
+      # This is very helpful during initial setup.
+      # ------------------------------------------------------
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+
+      # ------------------------------------------------------
+      # DEPLOY THROUGH AWS SYSTEMS MANAGER
+      #
+      # SSM reaches the PRIVATE EC2 instance without SSH.
+      #
+      # The instance ID comes from:
+      # ${{ vars.EC2_INSTANCE_ID }}
+      #
+      # We execute Docker commands as ssm-user because that is
+      # the user you previously configured for Docker access.
+      # ------------------------------------------------------
+      - name: Deploy application with AWS Systems Manager
+        id: deploy
+        shell: bash
+        run: |
+          echo "Sending deployment command to private EC2..."
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy PERN application from GitHub Actions" \
+            --parameters '{
+              "commands": [
+                "sudo -u ssm-user -H bash -lc '\''cd /home/ssm-user/pern-devops && docker compose -f 
+docker-compose.deploy.yml pull'\''",
+                "sudo -u ssm-user -H bash -lc '\''cd /home/ssm-user/pern-devops && docker compose -f 
+docker-compose.deploy.yml up -d'\''",
+                "sudo -u ssm-user -H bash -lc '\''cd /home/ssm-user/pern-devops && docker compose -f 
+docker-compose.deploy.yml ps'\''"
+              ]
+            }' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Command ID: $COMMAND_ID"
+
+          echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
+
+
+      # ------------------------------------------------------
+      # Wait until EC2 finishes executing deployment command
+      # ------------------------------------------------------
+      - name: Wait for deployment to complete
+        shell: bash
+        run: |
+          aws ssm wait command-executed \
+            --command-id "${{ steps.deploy.outputs.command_id }}" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}"
+
+
+      # ------------------------------------------------------
+      # Print deployment result into GitHub Actions logs
+      # ------------------------------------------------------
+      - name: Display deployment result
+        shell: bash
+        run: |
+          aws ssm get-command-invocation \
+            --command-id "${{ steps.deploy.outputs.command_id }}" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}"
+
+
+      # ======================================================
+      # POST-DEPLOYMENT HEALTH CHECK
+      # ======================================================
+
+      - name: Run application health check
+        id: health
+        shell: bash
+        run: |
+          echo "Starting application health verification..."
+
+          HEALTH_COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Verify PERN application health" \
+            --parameters '{
+              "commands": [
+                "for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://localhost/api/items && echo '\''Application is 
+healthy'\'' && exit 0; echo '\''Application not ready yet - retrying...'\''; sleep 5; done",
+                "echo '\''Application failed health verification'\''",
+                "sudo -u ssm-user -H bash -lc '\''cd /home/ssm-user/pern-devops && docker compose -f 
+docker-compose.deploy.yml ps'\''",
+                "exit 1"
+              ]
+            }' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "Health check command ID: $HEALTH_COMMAND_ID"
+
+          echo "health_command_id=$HEALTH_COMMAND_ID" >> "$GITHUB_OUTPUT"
+
+
+      # ------------------------------------------------------
+      # Wait for health check
+      # ------------------------------------------------------
+      - name: Wait for application health check
+        shell: bash
+        run: |
+          aws ssm wait command-executed \
+            --command-id "${{ steps.health.outputs.health_command_id }}" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}"
+
+
+      # ------------------------------------------------------
+      # Display final health-check result
+      # ------------------------------------------------------
+      - name: Display health check result
+        shell: bash
+        run: |
+          aws ssm get-command-invocation \
+            --command-id "${{ steps.health.outputs.health_command_id }}" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}"

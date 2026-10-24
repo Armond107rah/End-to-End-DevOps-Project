@@ -239,9 +239,7 @@ jobs:
         run: |
           echo "Starting health check..."
 
-          HEALTH_CMD=HEALTH_CMD="for i in 1 2 3 4 5 6 7 8 9 10; do if curl -fsS http://localhost/api/items; then echo
-'Application is healthy'; exit 0; fi; echo 'Application not ready yet'; sleep 5; done; echo 'Application failed health
-check'; exit 1"
+          HEALTH_CMD="for i in 1 2 3 4 5 6 7 8 9 10; do if curl -fsS http://localhost/api/items; then echo 'Application is healthy'; exit 0; fi; echo 'Application not ready yet'; sleep 5; done; echo 'Application failed health check'; exit 1"
 
           PARAMETERS=$(jq -nc \
             --arg c1 "$HEALTH_CMD" \
@@ -258,6 +256,19 @@ check'; exit 1"
           echo "Health Command ID: $HEALTH_COMMAND_ID"
           echo "health_command_id=$HEALTH_COMMAND_ID" >> "$GITHUB_OUTPUT"
 
+      - name: Wait for application health check
+        shell: bash
+        run: |
+          aws ssm wait command-executed \
+            --command-id "${{ steps.health.outputs.health_command_id }}" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}"
+
+      - name: Display health check result
+        shell: bash
+        run: |
+          aws ssm get-command-invocation \
+            --command-id "${{ steps.health.outputs.health_command_id }}" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}"
       # ---------------- WAIT FOR HEALTH CHECK ----------------
       - name: Wait for application health check
         shell: bash

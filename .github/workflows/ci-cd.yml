@@ -93,7 +93,7 @@ jobs:
             "./PERN-stack Application/Server"
 
       - name: Scan backend image with Trivy
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/armond107rah/pern-backend:${{ github.sha }}
           format: table
@@ -111,7 +111,7 @@ jobs:
             "./PERN-stack Application/Client"
 
       - name: Scan frontend image with Trivy
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/armond107rah/pern-frontend:${{ github.sha }}
           format: table

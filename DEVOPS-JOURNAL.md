@@ -871,3 +871,31 @@ This avoids long lived AWS access keys and avoids opening SSH to the server.
 [PASS] Healthy ALB target
 [PASS] Application reachable through ALB
 ```
+# Authenticate GitHub to AWS with OIDC
+GitHub Actions --> OIDC --> AWS STS --> IAM ROLE --> Temporary Credentials
+
+The trust relationship is limited to the intended repository and branch. 
+## Automate Continuous Deployment
+Systems Manager executes:
+```bash
+docker compose -f docker-compose.deploy.yml pull
+docker compose -f docker-compose.deploy.yml up -d
+docker compose -f docker-compose.deploy.yml ps
+```
+## Verify the Deployment
+The pipeline calls http://localhost/api/items
+and retries while the application initializes. If the endpoint fails to become healthy, the deployment job fails.
+
+[insert pipeline deployment image]
+
+# Enterprise Relevance
+Although this project uses a single EC2 application host, the concepts map directly to larger environments:
+- CI/CD controls software promotion
+- immutable container artifacts improve repeatability
+- registries create a versioned artifact boundary
+- vulnerability scanning introduces automated security governance
+- private networking reduces attack surface
+- IAM and OIDC provide temporary workload identity
+- SSM reduces dependence on inbound administration
+- load balancers separate public traffic from application compute
+- health checks provide automated deployment validation

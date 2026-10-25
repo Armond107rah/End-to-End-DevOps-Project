@@ -1,13 +1,7 @@
 name: PERN DevSecOps CI/CD Pipeline
 
 on:
-  push:
-    branches:
-      - devops-pipeline
-
-  pull_request:
-    branches:
-      - devops-pipeline
+  workflow_dispatch:
 
 
 jobs:
